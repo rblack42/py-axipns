@@ -1,10 +1,10 @@
 .PHONY: pyinit
 pyinit:  ## configure python project
 	@test ./.python-version || \
-		cp ~/_sys/python-version .python-version
+		cp ~/_sys/PYPROJ/python-version .python-version
 
 	@test ./.envrc || \
-		cp ~/_sys/envrc .envrc
+		cp ~/_sys/PYPROJ/envrc .envrc
 
 .PHONY: pyprep
 pyprep: ## install pip tools

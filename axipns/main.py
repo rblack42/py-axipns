@@ -1,6 +1,6 @@
 from FreeStream import InitialConditions
 from Grid import CreateGrid
-from AxiSolver import COnicalSolution
+from AxiSolver import ConicalSolution
 from AxiSolver import GenerateMarchingSolution
 class app(object):
 

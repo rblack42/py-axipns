@@ -125,7 +125,6 @@ class OgiveCylinder:
         x0  = x0 + dx0
         x1  = x1 + dx0
         x2  = x2 + dx0
-        print("x0=%10.6f x1=%10.6f x2=%10.6f\n" % (x0,x1,x2))
 
         # nondimensionalize the body dimension data using x2
 

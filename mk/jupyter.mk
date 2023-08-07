@@ -1,7 +1,7 @@
 .PHONY: nb
 nb:
 	cd book && \
-		jupyter notebook
+		jupyter-lab notebook
 
 .PHONY: book
 book:

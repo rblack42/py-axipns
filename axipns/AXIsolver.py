@@ -10,8 +10,10 @@
 #   (original program created in 1975 at USAF ARL Laboratories)
 
 import math
-from Body import *
-from OuterBoundary import *
+import time
+
+from Body import Body, OgiveCylinder
+from OuterBoundary import OuterBoundary, OuterCone
 
 class AXIsolver:
     '''Axisymettric Parabolized Navier Stokes Solver'''
@@ -20,6 +22,7 @@ class AXIsolver:
         '''Initialize solver with input values'''
         self.values = values
         self.initSolver()
+        self.fout = open("solution.dat",'w')
         
 
     def initSolver(self):
@@ -43,20 +46,21 @@ class AXIsolver:
         # Useful math constants
         pi  = math.acos(-1.0)
         drcon   = pi/180.0
+        gamma = 1.4
 
-        # Free Stream conditions
+        # Free Stream conditions (provided from pgm start)
         self.xminf   = self.values['minf']        # Mach number
         self.tref    = self.values['tref']        # Free stream temperature
         self.reref   = self.values['reref']       # Reference Reynolds number
-        self.xmuref  = self.values['muref']       # Free stream viscisity
+        self.xmuref  = self.values['muref']       # Free stream viscosity
         self.xmuinf  = self.values['muinf']       # nondimensional viscosity (?)
 
         # Computational adjustment factor
         self.beta    = -20.0
 
         # computed free stream conditions
-        self.hinf    = (1.0+2.0/(0.4*self.xminf**2))/2.0
-        self.pinf    = 1.0/(1.4*self.xminf**2)
+        self.hinf    = (1.0+2.0/((gamma - 1)*self.xminf**2))/2.0
+        self.pinf    = 1.0/(gamma*self.xminf**2)
 
         # Outer Boundary definition
         self.thetas  = self.values['thetas']
@@ -114,8 +118,8 @@ class AXIsolver:
         self.rsx = [ 0.0, 0.0, 0.0, 0.0 ]
         self.x   = [ 0.0, 0.0, 0.0, 0.0 ]
     
-        self.xmu1    = 0.0
-        self.xmu2    = 0.0
+        #self.xmu1    = 0.0
+        #self.xmu2    = 0.0
 
         self.plotx1 = self.dplot
         self.plotx2 = self.dplot - self.dxi
@@ -125,12 +129,15 @@ class AXIsolver:
 
         # update the x location
         if(self.march):
+            # when marching, advance x by dxi
             self.x[1] = self.x[2]
             self.x[2] = self.x[1] + self.dxi
         else:
+            # conical flow, reset x location to x0
             self.x[1] = self.x0 / self.xl2 - self.dxi
             self.x[2] = self.x[1] + self.dxi
-            
+
+        # we scale the viscosity along x    
         self.xmu1 = self.xmuinf * self.x[1]
         self.xmu2 = self.xmuinf * self.x[2]
         
@@ -154,12 +161,14 @@ class AXIsolver:
     #--------------------------------------------------------------------
 
     def printer(self,mit,delm):
+        '''ancient ascii printer plotting scheme'''
         print("Flow Field Properties")
         if(self.march):
             print("Axial Location %10.5f" % self.x[2])
         else:
             print("Tangent Cone Iteration %3d (%10.5f)" % (mit, delm))
         print("  I      Rho         U          V          P          T          M        Pt")
+        self.fout.write("Axial Location = %10.f\n" % self.x[2])
         for i in range ( self.neta, 0, -1 ):
             t = self.hinf - 0.5*(self.u[i]**2 + self.v[i]**2)
             pt2 = self.p[i]
@@ -174,54 +183,70 @@ class AXIsolver:
             ptg = ""
             for k in range (1,j+1):
                 ptg += "*"
-            print(" %2d %10.5f %10.5f %10.5f %10.5f %10.5f %10.5f %s" % \
-                (i,self.rho[i],self.u[i],self.v[i],self.p[i],t, xm, ptg))
-                
+            line = " %2d %10.5f %10.5f %10.5f %10.5f %10.5f %10.5f %10.5f" % \
+                (i,self.rho[i],self.u[i],self.v[i],self.p[i],t, xm, pt2)
+            print(line)
+            self.fout.write(line)
+            self.fout.write('\n')
+            
     #--------------------------------------------------------------------
     def solve(self,i,aa,bb,cc):
         '''Reduce Solution vector to primitive values'''
+        gamma = 1.4
         xk = self.hinf - 0.5*(cc/aa)**2
-        phi = 0.8 * xk * aa * aa/(1.4 * bb * bb)
-        phm = 1.4/2.4
+        phi = 2*(gamma-1) * xk * aa * aa/(gamma * bb * bb)
+        phm = gamma/(gamma+1)
         phs = 0.95 * phm
         if(phi > phs):
             self.betloc = True
         if((i == 2) and self.betloc):
             phi = phm
+
+        # we restrict solutions to supersonic. As long as phi is less that phm
+        #   we ignore the radical in calculating phi.
         rad = 0.0
-        test = 1.0 - phi - phi/1.4
+        test = 1.0 - phi - phi/gamma
         if(phi < phm):
-            rad = math.sqrt(1.0-phi-phi/1.4)
-        den = 1.4*phi - 0.4
+            rad = math.sqrt(1.0-phi-phi/gamma)
+        den = gamma*phi - (gamma - 1)
+
+        # calculate  M_x^2 
         xmx = (1.0 - phi + rad)/den
-        self.pp = bb /(1.0 + 1.4*xmx)
-        t = xk/(1.0 + 0.2*xmx)
-        self.rr = 1.4*self.pp/(0.4*t)
+
+        # Set return variables
+        self.pp = bb /(1.0 + gamma*xmx)
+        self.tt = xk/(1.0 + 0.2*xmx)
+        self.rr = 1.4*self.pp/((gamma - 1)*self.tt)
         self.uu = aa / self.rr
         self.vv = cc / aa
  
     #--------------------------------------------------------------------
     def precor(self):
         '''MacCormack's Predictor Corrector Solver'''
+
+        # this code does the predictor-corrector sweep in one pass. 
+        # The predictor results are stored in the working array. 
+        # The corrector uses the working array values when available.
+
+        # clear working array
         w = [ [ 0,0,0,0 ], [ 0,0,0,0 ], [ 0,0,0,0 ], [ 0,0,0,0 ], [0,0,0,0 ] ]
 
-        # zero out the explorer data array
-        exp1 = []
-        for i in range (0,self.neta+1):
-            exp1 += [0.0]
-
+        gamma = 1.4
         # main predictor corrector sweep ========================================           
         for i in range (2,self.neta+1):
+
+            # on last pass, copy new working values back into position
             if(i == self.neta):
                 for j in range(1,5):
                     w[j][1] = w[j][2]
-                    w[j][2] = w[j][3]
+                    w[j][2] = w[j ][3]
+                # set 
                 w[1][3] = 1.0
                 w[2][3] = 1.0
                 w[3][3] = 0.0
                 w[4][3] = self.pinf
             else:
-                # Flowfield point - predictor ( 2 - neta-1 )
+                # Flowfield point - predictor ( 2 -> neta-1 )
                 r1 = self.rb[1] + self.eta[i]*(self.rs[1]-self.rb[1])
                 r1p = self.rb[1] +self.eta[i+1]*(self.rs[1]-self.rb[1])
                 ep1 = self.rho[i]*self.u[i]*r1
@@ -291,9 +316,13 @@ class AXIsolver:
                 cc = ep3/r2
                 # solve for primative variables and store in work area
                 self.solve(i,aa,bb,cc)
+
+                # move data in working array back for corrector pass
                 for j in range (1,5):
                     w[j][1] = w[j][2]
                     w[j][2] = w[j][3]
+
+                # save current results in working array
                 w[1][3] = self.rr
                 w[2][3] = self.uu
                 w[3][3] = self.vv
@@ -327,6 +356,7 @@ class AXIsolver:
                     f1pc = w[1][1]*w[3][1]*r2m
                     f2pc = f1pc*w[2][1]-sigxrm*r2m
                     f3pc = f1pc*w[3][1]+w[4][1]*r2m-trrm*r2m
+
                 etaxp = ((self.eta[i-1]-1.0)*self.rbx[2]- \
                             self.eta[i-1]*self.rsx[2])*etar 
                 uetap = (w[2][3]-w[2][2])*den1
@@ -370,90 +400,81 @@ class AXIsolver:
                 self.rho[i-1]   = self.rr
                 self.u[i-1]     = self.uu
                 self.v[i-1]     = self.vv
-                psav            = self.p[i-1]
+
+                # convergence depends on the max change in pressure
+                psav            = self.p[i-1]   # save last value
                 self.p[i-1]     = self.pp
-                delp            = self.pp - psav
+                delp            = self.pp - psav  # calculate difference
                 if(delp > self.delm):
-                    self.delm   = delp
+                    self.delm   = delp             # update max this pass
             else:
                 # we are at the lower boundary
                 w[4][2] = w[4][3]
                 w[2][2] = 0.0
                 w[3][2] = 0.0
-                w[1][2] = 1.4*w[4][2]/(0.4*self.hinf)
+                w[1][2] = gamma*w[4][2]/((gamma - 1)*self.hinf)
         
         # Body conditions
         self.p[1] = self.p[2]
-        self.rho[1] = 1.4*self.p[1]/(0.4*self.hinf)
+        self.rho[1] = gamma*self.p[1]/((gamma - 1)*self.hinf)
         
     #--------------------------------------------------------------------
 
     def runSolver(self):
         # Main computational loop
         mit = 0
+
+        xstep = 0
         self.body()
         if self.doprint > 0:
             self.printer(mit,self.delm)
         convrg = False
+        tic = time.perf_counter()
         while convrg == False:
             self.delm = 0.0
             self.body()
             self.precor()
             mit = mit + 1
             if(self.march):
+                xstep = xstep + 1
+
+                # see if we reached he end of the body
                 if(self.x[2] > 1.0 - self.dxi):
                         convrg = True
-                        print("Solution ending at x = %10.6f\n" % self.x[2])
+                        print("Solution ending at x = %10.6f" % self.x[2])
+                        print("Axial steps: %d\n" % xstep)
+                        toc = time.perf_counter()
+                        print(f"  Total time: {toc - tic:0.4f} seconds")
+                # otherwise generate plot at xplot stations
                 elif(self.x[2] > self.xplot):
                     if self.doprint > 0:
                         self.printer(mit,self.delm)
+
+                    # set for next plot station
                     self.xplot = self.xplot+self.dplot
                     
             else:
+                # see if we have reached nplot iterations
                 if((mit/self.nplot*self.nplot) == mit):
                     if self.doprint >0:
                         self.printer(mit,self.delm)
+
+                # check conical flow convergence
                 if(self.delm <= 0.0001):
-                    print("Converged on iteration %4d" % ( self.mit ))
+                    print("Conical solution converged on iteration %4d" % mit)
                     self.march = True
                 else:
                     if(mit >= self.nitmax):
                         convrg = True
                         print("Run stopped (nitmax = %4d)" % self.nitmax)
+        self.fout.close()
 
-    def setBody(self,body):
-        '''Set the body for this solution'''
-        self.mybody = body
-
-    def setShock(self,shock):
-        '''Set the outer boundary for this solution'''
-        self.shock = shock
-
-    def setPrinter(self,doprint):
-        self.doprint = doprint
-        
-    def setDataType(self,datatype):
-        self.datatype = datatype
-        
-    def plotBody(self):
-        dxi = self.mybody.bodylength/float(self.plotter.width)
-        scale = 1.0    
-        points = self.mybody.getBodyPoints(self.plotter.width,dxi,scale)
-        #bounds = self.shock.getBoundaryPoints(self.plotter.width,dxi,scale)
-        #self.plotter.plotter.setLine(points,'black',2)
-        #self.plotter.plotter.setLine(bounds,'black',2)
-        #self.plotter.plotter.drawLines()
-
-    def setValues(self,values):
-        ''' reset initial values from input form'''
-        self.values = values
-        self.initSolver()
-        
+#================================================================================
 if __name__ == '__main__':
 
     # test case initial data
     v = {}
-    v['minf']   = 5.95          # Axial Mach NUmber
+    v['minf']   = 5.95          # Axial Mach Number
     v['tref']   = 1464.7157     # Reference static temperature
     v['reref']  = 2179168.0     # Ref Reynolds Number
     v['muref']  = 7.65034e-7    # Reference Viscosity
